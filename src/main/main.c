@@ -610,15 +610,16 @@ static int fhs_update(struct re *re, struct fhs **fhsp, re_sock_t fd,
 	struct fhs *fhs = NULL;
 	struct le *le = hash_lookup(re->fhl, (uint32_t)fd, fhs_lookup, &fd);
 
-	if (le)
+	if (le) {
 		fhs = le->data;
+	}
 	else {
 		fhs = mem_zalloc(sizeof(struct fhs), NULL);
+		if (!fhs)
+			return ENOMEM;
+
 		fhs->index = -1;
 	}
-
-	if (!fhs)
-		return ENOMEM;
 
 	if (fhs->index == -1)
 		fhs->index = re->nfds - 1;
