@@ -802,7 +802,7 @@ static int fd_poll(struct re *re)
 				if (!fhs->flags)
 					continue;
 
-				sfds = max(sfds, fhs->fd + 1);
+				sfds = max(sfds, (int)fhs->fd + 1);
 
 				if (sfds >= DEFAULT_MAXFDS)
 					return EMFILE;
