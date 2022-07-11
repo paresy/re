@@ -924,8 +924,11 @@ static int fd_poll(struct re *re)
 		case METHOD_POLL:
 			fd = re->fds[i].fd;
 			le = hash_lookup(re->fhl, fd, fhs_lookup, &fd);
-			if (!le)
-				break;
+			if (!le) {
+				DEBUG_WARNING("poll: hash_lookup err fd=%d\n",
+					      fd);
+				continue;
+			}
 
 			fhs = le->data;
 
