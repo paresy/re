@@ -70,7 +70,8 @@ enum {
 
 /** File descriptor handler struct */
 struct fhs {
-	struct le le;
+	struct le le;        /**< Hash entry                        */
+	int index;           /**< Index used for arrays             */
 	re_sock_t fd;        /**< File Descriptor                   */
 	int flags;           /**< Polling flags (Read, Write, etc.) */
 	fd_h* fh;            /**< Event handler                     */
@@ -281,22 +282,23 @@ static int set_poll_fds(struct re *re, struct fhs *fhs)
 
 	re_sock_t fd = fhs->fd;
 	int flags = fhs->flags;
+	int index = fhs->index;
 
-	if (fd >= re->maxfds)
+	if (index >= re->maxfds)
 		return EMFILE;
 
 	if (flags)
-		re->fds[fd].fd = fd;
+		re->fds[index].fd = fd;
 	else
-		re->fds[fd].fd = -1;
+		re->fds[index].fd = -1;
 
-	re->fds[fd].events = 0;
+	re->fds[index].events = 0;
 	if (flags & FD_READ)
-		re->fds[fd].events |= POLLIN;
+		re->fds[index].events |= POLLIN;
 	if (flags & FD_WRITE)
-		re->fds[fd].events |= POLLOUT;
+		re->fds[index].events |= POLLOUT;
 	if (flags & FD_EXCEPT)
-		re->fds[fd].events |= POLLERR;
+		re->fds[index].events |= POLLERR;
 
 	return 0;
 }
@@ -608,23 +610,18 @@ static int fhs_update(struct re *re, struct fhs **fhsp, re_sock_t fd,
 	struct fhs *fhs = NULL;
 	struct le *le = hash_lookup(re->fhl, (uint32_t)fd, fhs_lookup, &fd);
 
-#ifdef WIN32
-	/* on windows fds not re-used */
-	if (le && !fh && !flags) {
-		hash_unlink(le);
-		mem_deref(le->data);
-
-		return 0;
-	}
-#endif
-
 	if (le)
 		fhs = le->data;
-	else
+	else {
 		fhs = mem_zalloc(sizeof(struct fhs), NULL);
+		fhs->index = -1;
+	}
 
 	if (!fhs)
 		return ENOMEM;
+
+	if (fhs->index == -1)
+		fhs->index = re->nfds - 1;
 
 	fhs->fd	   = fd;
 	fhs->flags = flags;
@@ -637,6 +634,18 @@ static int fhs_update(struct re *re, struct fhs **fhsp, re_sock_t fd,
 	*fhsp = fhs;
 
 	return 0;
+}
+
+
+static void fhs_delete(struct fhs *fhs)
+{
+#ifdef WIN32
+	/* on windows fds not re-used */
+	hash_unlink(&fhs->le);
+	mem_deref(fhs);
+#else
+	fhs->index = -1;
+#endif
 }
 
 
@@ -678,20 +687,15 @@ int fd_listen(re_sock_t fd, int flags, fd_h *fh, void *arg)
 		err = poll_setup(re);
 		if (err)
 			return err;
+		re->nfds++;
+	}
+	else {
+		re->nfds--;
 	}
 
 	err = fhs_update(re, &fhs, fd, flags, fh, arg);
 	if (err)
 		return err;
-
-#ifdef WIN32
-	if (flags || fh)
-		re->nfds++;
-	else
-		re->nfds--;
-#else
-	re->nfds = max(re->nfds, fd+1);
-#endif
 
 	switch (re->method) {
 #ifdef HAVE_SELECT
@@ -724,6 +728,9 @@ int fd_listen(re_sock_t fd, int flags, fd_h *fh, void *arg)
 	default:
 		break;
 	}
+
+	if (!flags)
+		fhs_delete(fhs);
 
 	if (err) {
 		if (flags && fh) {
@@ -761,6 +768,7 @@ static int fd_poll(struct re *re)
 	int n;
 	struct le *le;
 #ifdef HAVE_SELECT
+	int sfds;
 	fd_set rfds, wfds, efds;
 #endif
 
@@ -786,16 +794,17 @@ static int fd_poll(struct re *re)
 		FD_ZERO(&efds);
 
 		uint32_t bsize = hash_bsize(re->fhl);
-		int sfds = 0;
 		for (uint32_t i = 0; i < bsize; i++) {
 			LIST_FOREACH(hash_list_idx(re->fhl, i), le)
 			{
 				struct fhs *fhs = le->data;
 
-				if (!fhs->flags || !fhs->fh)
+				if (!fhs->flags)
 					continue;
 
-				if (++sfds >= DEFAULT_MAXFDS)
+				sfds = max(sfds, fhs->fd + 1);
+
+				if (sfds >= DEFAULT_MAXFDS)
 					return EMFILE;
 
 				if (fhs->flags & FD_READ)
@@ -814,7 +823,7 @@ static int fd_poll(struct re *re)
 #endif
 		tv.tv_usec = (uint32_t) (to % 1000) * 1000;
 		re_unlock(re);
-		n = select(re->nfds, &rfds, &wfds, &efds, to ? &tv : NULL);
+		n = select(sfds, &rfds, &wfds, &efds, to ? &tv : NULL);
 		re_lock(re);
 	}
 		break;
@@ -858,8 +867,8 @@ static int fd_poll(struct re *re)
 	if (re->method == METHOD_SELECT) {
 		uint32_t bsize = hash_bsize(re->fhl);
 		for (uint32_t i = 0; (n > 0) && (i < bsize); i++) {
-			LIST_FOREACH(hash_list_idx(re->fhl, i), le)
-			{
+			for (le = list_head(hash_list_idx(re->fhl, i));
+			     (n > 0) && le; le = le->next) {
 				struct fhs *fhs = le->data;
 				re_sock_t fd = fhs->fd;
 				int flags = 0;
@@ -901,7 +910,7 @@ static int fd_poll(struct re *re)
 #endif
 
 	/* Fast event handling */
-	for (int i = 0; (n > 0) && (i < re->maxfds); i++) {
+	for (int i = 0; (n > 0) && (i < re->nfds); i++) {
 #ifndef WIN32
 		re_sock_t fd;
 #endif
@@ -912,28 +921,28 @@ static int fd_poll(struct re *re)
 
 #ifdef HAVE_POLL
 		case METHOD_POLL:
-			fd = i;
+			fd = re->fds[i].fd;
 			le = hash_lookup(re->fhl, fd, fhs_lookup, &fd);
 			if (!le)
 				break;
 
 			fhs = le->data;
 
-			if (re->fds[fd].revents & POLLIN)
+			if (re->fds[i].revents & POLLIN)
 				flags |= FD_READ;
-			if (re->fds[fd].revents & POLLOUT)
+			if (re->fds[i].revents & POLLOUT)
 				flags |= FD_WRITE;
-			if (re->fds[fd].revents & (POLLERR|POLLHUP|POLLNVAL))
+			if (re->fds[i].revents & (POLLERR|POLLHUP|POLLNVAL))
 				flags |= FD_EXCEPT;
-			if (re->fds[fd].revents & POLLNVAL) {
+			if (re->fds[i].revents & POLLNVAL) {
 				DEBUG_WARNING("event: fd=%d POLLNVAL"
 					      " (fds.fd=%d,"
 					      " fds.events=0x%02x)\n",
-					      fd, re->fds[fd].fd,
-					      re->fds[fd].events);
+					      fd, re->fds[i].fd,
+					      re->fds[i].events);
 			}
 			/* Clear events */
-			re->fds[fd].revents = 0;
+			re->fds[i].revents = 0;
 			break;
 #endif
 #ifdef HAVE_EPOLL
