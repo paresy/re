@@ -768,7 +768,7 @@ static int fd_poll(struct re *re)
 	int n;
 	struct le *le;
 #ifdef HAVE_SELECT
-	int sfds;
+	int sfds = 0;
 	fd_set rfds, wfds, efds;
 #endif
 
