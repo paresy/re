@@ -82,6 +82,7 @@ struct fhs {
 struct re {
 	struct hash *fhl;            /**< File descriptor hash list         */
 	int maxfds;                  /**< Maximum number of polling fds     */
+	int max_fd;                  /**< Maximum fd number                 */
 	int nfds;                    /**< Number of active file descriptors */
 	enum poll_method method;     /**< The current polling method        */
 	bool update;                 /**< File descriptor set need updating */
@@ -694,6 +695,10 @@ int fd_listen(re_sock_t fd, int flags, fd_h *fh, void *arg)
 		re->nfds--;
 	}
 
+#ifndef WIN32
+	re->max_fd = max(re->max_fd, fd + 1);
+#endif
+
 	err = fhs_update(re, &fhs, fd, flags, fh, arg);
 	if (err)
 		return err;
@@ -701,8 +706,13 @@ int fd_listen(re_sock_t fd, int flags, fd_h *fh, void *arg)
 	switch (re->method) {
 #ifdef HAVE_SELECT
 	case METHOD_SELECT:
+#ifdef WIN32
 		if (re->nfds >= DEFAULT_MAXFDS)
 			err = EMFILE;
+#else
+		if (re->max_fd >= DEFAULT_MAXFDS)
+			err = EMFILE;
+#endif
 		break;
 #endif
 
@@ -798,7 +808,6 @@ static int fd_poll(struct re *re)
 		FD_ZERO(&efds);
 
 		uint32_t bsize = hash_bsize(re->fhl);
-		int max_fd = 0;
 		for (uint32_t i = 0; i < bsize; i++) {
 			LIST_FOREACH(hash_list_idx(re->fhl, i), le)
 			{
@@ -811,10 +820,6 @@ static int fd_poll(struct re *re)
 					sfds[fhs->index] = fhs->fd;
 				else
 					return EMFILE;
-#else
-				max_fd = max(max_fd, fhs->fd + 1);
-				if (max_fd >= DEFAULT_MAXFDS)
-					return EMFILE;
 #endif
 
 				if (fhs->flags & FD_READ)
@@ -826,8 +831,8 @@ static int fd_poll(struct re *re)
 			}
 		}
 
-		if (max_fd)
-			nfds = max_fd;
+		if (re->max_fd)
+			nfds = re->max_fd;
 #ifdef WIN32
 		tv.tv_sec  = (long) to / 1000;
 #else
@@ -1303,10 +1308,19 @@ int poll_method_set(enum poll_method method)
 #endif
 #ifdef HAVE_SELECT
 	case METHOD_SELECT:
-		if (re->maxfds > (int)FD_SETSIZE) {
-			DEBUG_WARNING("SELECT: maxfds > FD_SETSIZE\n");
+#ifdef WIN32
+		if (re->nfds > (int)DEFAULT_MAXFDS) {
+			DEBUG_WARNING("poll_method_set: can not use SELECT "
+				      "max. FDs are reached\n");
 			return EMFILE;
 		}
+#else
+		if (re->max_fd > (int)DEFAULT_MAXFDS) {
+			DEBUG_WARNING("poll_method_set: can not use SELECT "
+				      "max. FDs are reached\n");
+			return EMFILE;
+		}
+#endif
 		break;
 #endif
 #ifdef HAVE_EPOLL
