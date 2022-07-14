@@ -798,7 +798,7 @@ static int fd_poll(struct re *re)
 		FD_ZERO(&efds);
 
 		uint32_t bsize = hash_bsize(re->fhl);
-		re_sock_t max_fd = 0;
+		int max_fd = 0;
 		for (uint32_t i = 0; i < bsize; i++) {
 			LIST_FOREACH(hash_list_idx(re->fhl, i), le)
 			{
@@ -980,7 +980,8 @@ static int fd_poll(struct re *re)
 			continue;
 
 		if (!fhs) {
-			le = hash_lookup(re->fhl, fd, fhs_lookup, &fd);
+			le = hash_lookup(re->fhl, (uint32_t)fd, fhs_lookup,
+					 &fd);
 			if (!le) {
 				DEBUG_WARNING("hash_lookup err fd=%d\n", fd);
 				continue;
