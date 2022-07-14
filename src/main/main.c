@@ -770,10 +770,10 @@ static int fd_poll(struct re *re)
 	struct le *le;
 	int nfds = re->nfds;
 #ifdef HAVE_SELECT
+	fd_set rfds, wfds, efds;
 #ifdef WIN32
 	re_sock_t sfds[DEFAULT_MAXFDS];
 #endif
-	fd_set rfds, wfds, efds;
 #endif
 
 	DEBUG_INFO("next timer: %llu ms\n", to);
@@ -798,7 +798,7 @@ static int fd_poll(struct re *re)
 		FD_ZERO(&efds);
 
 		uint32_t bsize = hash_bsize(re->fhl);
-		int max_fd = 0;
+		re_sock_t max_fd = 0;
 		for (uint32_t i = 0; i < bsize; i++) {
 			LIST_FOREACH(hash_list_idx(re->fhl, i), le)
 			{
@@ -807,9 +807,14 @@ static int fd_poll(struct re *re)
 				if (!fhs->flags)
 					continue;
 #ifdef WIN32
-				fds[fhs->index] = fhs->fd;
+				if (fhs->index < DEFAULT_MAXFDS)
+					sfds[fhs->index] = fhs->fd;
+				else
+					return EMFILE;
 #else
-				max_fd = max(max_fd, (int)fhs->fd + 1);
+				max_fd = max(max_fd, fhs->fd + 1);
+				if (max_fd >= DEFAULT_MAXFDS)
+					return EMFILE;
 #endif
 
 				if (fhs->flags & FD_READ)
@@ -869,9 +874,7 @@ static int fd_poll(struct re *re)
 		return ERRNO_SOCK;
 
 	for (int i = 0; (n > 0) && (i < nfds); i++) {
-#ifndef WIN32
 		re_sock_t fd;
-#endif
 		struct fhs *fhs = NULL;
 		int flags = 0;
 
@@ -879,7 +882,7 @@ static int fd_poll(struct re *re)
 #ifdef HAVE_SELECT
 		case METHOD_SELECT:
 #ifdef WIN32
-			fd = re->sfds[i].fd;
+			fd = sfds[i];
 #else
 			fd = i;
 #endif
