@@ -738,7 +738,7 @@ int fd_listen(re_sock_t fd, int flags, fd_h *fh, void *arg)
 		re->max_fd = max(re->max_fd, fd + 1);
 #endif
 
-	if (!flags) 
+	if (!flags)
 		fhs_delete(re, fhs);
 
 	if (err && flags) {
