@@ -623,7 +623,7 @@ static int fhs_update(struct re *re, struct fhs **fhsp, re_sock_t fd,
 	}
 
 	if (fhs->index == -1)
-		fhs->index = re->nfds - 1;
+		fhs->index = ++re->nfds - 1;
 
 	fhs->fd	   = fd;
 	fhs->flags = flags;
@@ -639,15 +639,16 @@ static int fhs_update(struct re *re, struct fhs **fhsp, re_sock_t fd,
 }
 
 
-static void fhs_delete(struct fhs *fhs)
+static void fhs_delete(struct re *re, struct fhs *fhs)
 {
-#ifdef WIN32
+#ifndef WIN32
 	/* on windows fds not re-used */
 	hash_unlink(&fhs->le);
 	mem_deref(fhs);
 #else
 	fhs->index = -1;
 #endif
+	--re->nfds;
 }
 
 
@@ -689,15 +690,7 @@ int fd_listen(re_sock_t fd, int flags, fd_h *fh, void *arg)
 		err = poll_setup(re);
 		if (err)
 			return err;
-		re->nfds++;
 	}
-	else {
-		re->nfds--;
-	}
-
-#ifndef WIN32
-	re->max_fd = max(re->max_fd, fd + 1);
-#endif
 
 	err = fhs_update(re, &fhs, fd, flags, fh, arg);
 	if (err)
@@ -710,7 +703,7 @@ int fd_listen(re_sock_t fd, int flags, fd_h *fh, void *arg)
 		if (re->nfds >= DEFAULT_MAXFDS)
 			err = EMFILE;
 #else
-		if (re->max_fd >= DEFAULT_MAXFDS)
+		if (fd + 1 >= DEFAULT_MAXFDS)
 			err = EMFILE;
 #endif
 		break;
@@ -740,15 +733,18 @@ int fd_listen(re_sock_t fd, int flags, fd_h *fh, void *arg)
 		break;
 	}
 
-	if (!flags)
-		fhs_delete(fhs);
+#ifndef WIN32
+	if (!err)
+		re->max_fd = max(re->max_fd, fd + 1);
+#endif
 
-	if (err) {
-		if (flags && fh) {
-			fd_close(fd);
-			DEBUG_WARNING("fd_listen: fd=%d flags=0x%02x (%m)\n",
-				      fd, flags, err);
-		}
+	if (!flags) 
+		fhs_delete(re, fhs);
+
+	if (err && flags) {
+		fd_close(fd);
+		DEBUG_WARNING("fd_listen: fd=%d flags=0x%02x (%m)\n", fd,
+			      flags, err);
 	}
 
 	return err;
