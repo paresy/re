@@ -1464,13 +1464,20 @@ void re_thread_leave(void)
  * for the current process. So re reuses the fhs hash entry by default
  * (Linux/Unix only). For lower memory usage this can be disabled.
  *
- * @param re     re context
+ * @param re     re context (NULL for re thread/global fallback)
  * @param reuse  If true reuse fhs hash entry, otherwise delete on fd_close
  */
 void re_fhs_reuse_set(struct re *re, bool reuse)
 {
-	if (re)
-		re->fhs_reuse = reuse;
+	if (!re) 
+		re = re_get();
+
+	if (!re) {
+		DEBUG_WARNING("re_fhs_reuse_set: re not ready\n");
+		return;
+	}
+
+	re->fhs_reuse = reuse;
 }
 
 
