@@ -164,7 +164,9 @@ int re_alloc(struct re **rep)
 	list_init(&re->tmrl);
 	list_init(&re->fhs_delete);
 
-#ifndef WIN32
+#ifdef WIN32
+	re->fhs_reuse = false;
+#else
 	re->fhs_reuse = true;
 #endif
 
@@ -744,11 +746,15 @@ int fd_listen(re_sock_t fd, int flags, fd_h *fh, void *arg)
 
 	if (!flags) {
 		if (!re->fhs_reuse) {
-			if (re->polling)
+			if (re->polling) {
 				list_append(&re->fhs_delete, &fhs->le_delete,
 					    fhs);
+				if (re->method == METHOD_EPOLL)
+					hash_unlink(&fhs->he);
+			}
 			else
 				mem_deref(fhs);
+
 		}
 		fhs->index = -1;
 		--re->nfds;
