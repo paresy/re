@@ -490,8 +490,6 @@ static int poll_init(struct re *re)
 			return err;
 	}
 
-	list_flush(&re->fhs_delete);
-
 	switch (re->method) {
 
 #ifdef HAVE_POLL
@@ -745,8 +743,13 @@ int fd_listen(re_sock_t fd, int flags, fd_h *fh, void *arg)
 #endif
 
 	if (!flags) {
-		if (!re->fhs_reuse)
-			list_append(&re->fhs_delete, &fhs->le_delete, fhs);
+		if (!re->fhs_reuse) {
+			if (re->polling)
+				list_append(&re->fhs_delete, &fhs->le_delete,
+					    fhs);
+			else
+				mem_deref(fhs);
+		}
 		fhs->index = -1;
 		--re->nfds;
 	}
