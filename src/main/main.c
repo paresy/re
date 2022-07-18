@@ -70,7 +70,7 @@ enum {
 
 /** File descriptor handler struct */
 struct fhs {
-	struct le le;        /**< Hash entry                        */
+	struct le he;        /**< Hash entry                        */
 	struct le le_delete; /**< Delete entry                      */
 	int index;           /**< Index used for arrays             */
 	re_sock_t fd;        /**< File Descriptor                   */
@@ -221,10 +221,10 @@ static struct re *re_get(void)
 }
 
 
-static bool fhs_lookup(struct le *le, void *arg)
+static bool fhs_lookup(struct le *he, void *arg)
 {
 	re_sock_t fd = *(re_sock_t *)arg;
-	struct fhs *fhs = le->data;
+	struct fhs *fhs = he->data;
 
 	if (fd == fhs->fd)
 		return true;
@@ -430,11 +430,11 @@ static int set_kqueue_fds(struct re *re, struct fhs *fhs)
  * Rebuild the file descriptor mapping. This must be done whenever
  * the polling method is changed.
  */
-static bool rebuild_fd(struct le *le, void *arg)
+static bool rebuild_fd(struct le *he, void *arg)
 {
 	int err = 0;
 	struct re *re = arg;
-	struct fhs *fhs = le->data;
+	struct fhs *fhs = he->data;
 
 
 	/* Update fd sets */
@@ -620,7 +620,7 @@ static void fhs_destroy(void *data)
 {
 	struct fhs *fhs = data;
 
-	hash_unlink(&fhs->le);
+	hash_unlink(&fhs->he);
 }
 
 
@@ -628,10 +628,10 @@ static int fhs_update(struct re *re, struct fhs **fhsp, re_sock_t fd,
 		      int flags, fd_h *fh, void *arg)
 {
 	struct fhs *fhs = NULL;
-	struct le *le = hash_lookup(re->fhl, (uint32_t)fd, fhs_lookup, &fd);
+	struct le *he = hash_lookup(re->fhl, (uint32_t)fd, fhs_lookup, &fd);
 
-	if (le) {
-		fhs = le->data;
+	if (he) {
+		fhs = he->data;
 	}
 	else {
 		fhs = mem_zalloc(sizeof(struct fhs), fhs_destroy);
@@ -649,8 +649,8 @@ static int fhs_update(struct re *re, struct fhs **fhsp, re_sock_t fd,
 	fhs->fh	   = fh;
 	fhs->arg   = arg;
 
-	if (!le)
-		hash_append(re->fhl, (uint32_t)fd, &fhs->le, fhs);
+	if (!he)
+		hash_append(re->fhl, (uint32_t)fd, &fhs->he, fhs);
 
 	*fhsp = fhs;
 
@@ -783,7 +783,7 @@ static int fd_poll(struct re *re)
 {
 	const uint64_t to = tmr_next_timeout(&re->tmrl);
 	int n;
-	struct le *le;
+	struct le *he;
 	int nfds = re->nfds;
 #ifdef HAVE_SELECT
 	fd_set rfds, wfds, efds;
@@ -815,9 +815,9 @@ static int fd_poll(struct re *re)
 
 		uint32_t bsize = hash_bsize(re->fhl);
 		for (uint32_t i = 0; i < bsize; i++) {
-			LIST_FOREACH(hash_list_idx(re->fhl, i), le)
+			LIST_FOREACH(hash_list_idx(re->fhl, i), he)
 			{
-				struct fhs *fhs = le->data;
+				struct fhs *fhs = he->data;
 
 				if (!fhs->flags)
 					continue;
@@ -991,13 +991,13 @@ static int fd_poll(struct re *re)
 			continue;
 
 		if (!fhs) {
-			le = hash_lookup(re->fhl, (uint32_t)fd, fhs_lookup,
+			he = hash_lookup(re->fhl, (uint32_t)fd, fhs_lookup,
 					 &fd);
-			if (!le) {
+			if (!he) {
 				DEBUG_WARNING("hash_lookup err fd=%d\n", fd);
 				continue;
 			}
-			fhs = le->data;
+			fhs = he->data;
 		}
 
 		if (fhs->fh && fhs->index >= 0) {
@@ -1081,7 +1081,7 @@ int fd_setsize(int maxfds)
 void fd_debug(void)
 {
 	const struct re *re = re_get();
-	struct le *le;
+	struct le *he;
 
 	if (!re) {
 		DEBUG_WARNING("fd_debug: re not ready\n");
@@ -1093,9 +1093,9 @@ void fd_debug(void)
 
 	uint32_t bsize = hash_bsize(re->fhl);
 	for (uint32_t i = 0; i < bsize; i++) {
-		LIST_FOREACH(hash_list_idx(re->fhl, i), le)
+		LIST_FOREACH(hash_list_idx(re->fhl, i), he)
 		{
-			struct fhs *fhs = le->data;
+			struct fhs *fhs = he->data;
 
 			if (!fhs->flags)
 				continue;
