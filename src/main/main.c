@@ -1437,6 +1437,9 @@ void re_thread_enter(void)
 
 	re_lock(re);
 
+	/* Disable fhs_reuse (no multithreading support) */
+	re->fhs_reuse = false;
+
 	/* set only for non-re threads */
 	if (!thrd_equal(re->tid, thrd_current()))
 		re->thread_enter = true;
