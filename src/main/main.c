@@ -71,6 +71,7 @@ enum {
 /** File descriptor handler struct */
 struct fhs {
 	struct le le;        /**< Hash entry                        */
+	struct le le_delete; /**< Delete entry                      */
 	int index;           /**< Index used for arrays             */
 	re_sock_t fd;        /**< File Descriptor                   */
 	int flags;           /**< Polling flags (Read, Write, etc.) */
@@ -81,6 +82,8 @@ struct fhs {
 /** Polling loop data */
 struct re {
 	struct hash *fhl;            /**< File descriptor hash list         */
+	struct list fhs_delete;      /**< File descriptor delete list       */
+	bool fhs_reuse;              /**< Reuse file descriptors            */
 	int maxfds;                  /**< Maximum number of polling fds     */
 	int max_fd;                  /**< Maximum fd number                 */
 	int nfds;                    /**< Number of active file descriptors */
@@ -159,6 +162,12 @@ int re_alloc(struct re **rep)
 	re->mutexp = re->mutex;
 
 	list_init(&re->tmrl);
+	list_init(&re->fhs_delete);
+
+#ifndef WIN32
+	re->fhs_reuse = true;
+#endif
+
 	re->tid = thrd_current();
 
 #ifdef HAVE_EPOLL
@@ -481,6 +490,8 @@ static int poll_init(struct re *re)
 			return err;
 	}
 
+	list_flush(&re->fhs_delete);
+
 	switch (re->method) {
 
 #ifdef HAVE_POLL
@@ -605,6 +616,14 @@ static int poll_setup(struct re *re)
 }
 
 
+static void fhs_destroy(void *data)
+{
+	struct fhs *fhs = data;
+
+	hash_unlink(&fhs->le);
+}
+
+
 static int fhs_update(struct re *re, struct fhs **fhsp, re_sock_t fd,
 		      int flags, fd_h *fh, void *arg)
 {
@@ -615,7 +634,7 @@ static int fhs_update(struct re *re, struct fhs **fhsp, re_sock_t fd,
 		fhs = le->data;
 	}
 	else {
-		fhs = mem_zalloc(sizeof(struct fhs), NULL);
+		fhs = mem_zalloc(sizeof(struct fhs), fhs_destroy);
 		if (!fhs)
 			return ENOMEM;
 
@@ -636,19 +655,6 @@ static int fhs_update(struct re *re, struct fhs **fhsp, re_sock_t fd,
 	*fhsp = fhs;
 
 	return 0;
-}
-
-
-static void fhs_delete(struct re *re, struct fhs *fhs)
-{
-#ifndef WIN32
-	/* on windows fds not re-used */
-	hash_unlink(&fhs->le);
-	mem_deref(fhs);
-#else
-	fhs->index = -1;
-#endif
-	--re->nfds;
 }
 
 
@@ -738,8 +744,12 @@ int fd_listen(re_sock_t fd, int flags, fd_h *fh, void *arg)
 		re->max_fd = max(re->max_fd, fd + 1);
 #endif
 
-	if (!flags)
-		fhs_delete(re, fhs);
+	if (!flags) {
+		if (!re->fhs_reuse)
+			list_append(&re->fhs_delete, &fhs->le_delete, fhs);
+		fhs->index = -1;
+		--re->nfds;
+	}
 
 	if (err && flags) {
 		fd_close(fd);
@@ -990,7 +1000,7 @@ static int fd_poll(struct re *re)
 			fhs = le->data;
 		}
 
-		if (fhs->fh) {
+		if (fhs->fh && fhs->index >= 0) {
 #if MAIN_DEBUG
 			fd_handler(fhs, flags);
 #else
@@ -1007,6 +1017,8 @@ static int fd_poll(struct re *re)
 		/* Handle only active events */
 		--n;
 	}
+
+	list_flush(&re->fhs_delete);
 
 	return 0;
 }
@@ -1442,6 +1454,23 @@ void re_thread_leave(void)
 
 	re->thread_enter = false;
 	re_unlock(re);
+}
+
+
+/**
+ * Set if the fhs allocation should be reused
+ *
+ * NOTE: POSIX defines that the lowest-numbered file descriptor is returned
+ * for the current process. So re reuses the fhs hash entry by default
+ * (Linux/Unix only). For lower memory usage this can be disabled.
+ *
+ * @param re     re context
+ * @param reuse  If true reuse fhs hash entry, otherwise delete on fd_close
+ */
+void re_fhs_reuse_set(struct re *re, bool reuse)
+{
+	if (re)
+		re->fhs_reuse = reuse;
 }
 
 

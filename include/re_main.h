@@ -47,6 +47,7 @@ int   re_debug(struct re_printf *pf, void *unused);
 int   re_nfds(void);
 
 int  re_alloc(struct re **rep);
+void re_fhs_reuse_set(struct re *re, bool reuse);
 int  re_thread_attach(struct re *re);
 void re_thread_detach(void);
 
