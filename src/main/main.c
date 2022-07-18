@@ -1469,7 +1469,7 @@ void re_thread_leave(void)
  */
 void re_fhs_reuse_set(struct re *re, bool reuse)
 {
-	if (!re) 
+	if (!re)
 		re = re_get();
 
 	if (!re) {
